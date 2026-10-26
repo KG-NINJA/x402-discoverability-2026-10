@@ -1,0 +1,495 @@
+{
+ "registry_entries": 180194,
+ "mcp_hosts": 36806,
+ "population": 2735,
+ "reachable": {
+  "prevalence": {
+   "llms_txt": 64.8,
+   "a2a_card": 32.0,
+   "mcp_registry": 47.1,
+   "x402_wellknown": 67.3,
+   "robots_txt": 46.7,
+   "sitemap_xml": 37.8,
+   "live402_metadata": 91.9,
+   "x402scan_listed": 52.8,
+   "verification_page_heuristic": 4.0
+  },
+  "score_dist": {
+   "0": 34,
+   "1": 277,
+   "2": 379,
+   "3": 364,
+   "4": 349,
+   "5": 316,
+   "6": 387,
+   "7": 289,
+   "8": 301,
+   "9": 28
+  },
+  "mean": 4.44
+ },
+ "all": {
+  "prevalence": {
+   "llms_txt": 64.5,
+   "a2a_card": 31.8,
+   "mcp_registry": 47.2,
+   "x402_wellknown": 67.1,
+   "robots_txt": 46.5,
+   "sitemap_xml": 37.7,
+   "live402_metadata": 91.6,
+   "x402scan_listed": 52.8,
+   "verification_page_heuristic": 4.0
+  },
+  "score_dist": {
+   "0": 36,
+   "1": 282,
+   "2": 383,
+   "3": 364,
+   "4": 349,
+   "5": 316,
+   "6": 387,
+   "7": 289,
+   "8": 301,
+   "9": 28
+  },
+  "mean": 4.43
+ },
+ "top50_revenue": {
+  "prevalence": {
+   "llms_txt": 68.0,
+   "a2a_card": 30.0,
+   "mcp_registry": 54.0,
+   "x402_wellknown": 70.0,
+   "robots_txt": 60.0,
+   "sitemap_xml": 48.0,
+   "live402_metadata": 98.0,
+   "x402scan_listed": 74.0,
+   "verification_page_heuristic": 6.0
+  },
+  "score_dist": {
+   "0": 1,
+   "1": 1,
+   "2": 6,
+   "3": 6,
+   "4": 7,
+   "5": 5,
+   "6": 7,
+   "7": 8,
+   "8": 9
+  },
+  "mean": 5.08
+ },
+ "kg": {
+  "si.kgninja.dev": {
+   "score": 8,
+   "signals": {
+    "llms_txt": 1,
+    "a2a_card": 1,
+    "mcp_registry": 1,
+    "x402_wellknown": 0,
+    "robots_txt": 1,
+    "sitemap_xml": 1,
+    "live402_metadata": 1,
+    "x402scan_listed": 1,
+    "verification_page_heuristic": 1
+   },
+   "rev30": 0.02,
+   "vs_all": {
+    "n": 2735,
+    "lower": 2406,
+    "equal": 301,
+    "higher": 28,
+    "pct_strictly_below": 88.0,
+    "top_pct": 12.0,
+    "rank_best": 29
+   },
+   "vs_reachable": {
+    "n": 2724,
+    "lower": 2395,
+    "equal": 301,
+    "higher": 28,
+    "pct_strictly_below": 87.9,
+    "top_pct": 12.1,
+    "rank_best": 29
+   },
+   "vs_top50": {
+    "n": 50,
+    "lower": 41,
+    "equal": 9,
+    "higher": 0,
+    "pct_strictly_below": 82.0,
+    "top_pct": 18.0,
+    "rank_best": 1
+   }
+  },
+  "agent-economy.kgninja.dev": {
+   "score": 9,
+   "signals": {
+    "llms_txt": 1,
+    "a2a_card": 1,
+    "mcp_registry": 1,
+    "x402_wellknown": 1,
+    "robots_txt": 1,
+    "sitemap_xml": 1,
+    "live402_metadata": 1,
+    "x402scan_listed": 1,
+    "verification_page_heuristic": 1
+   },
+   "rev30": 0.01,
+   "vs_all": {
+    "n": 2735,
+    "lower": 2707,
+    "equal": 28,
+    "higher": 0,
+    "pct_strictly_below": 99.0,
+    "top_pct": 1.0,
+    "rank_best": 1
+   },
+   "vs_reachable": {
+    "n": 2724,
+    "lower": 2696,
+    "equal": 28,
+    "higher": 0,
+    "pct_strictly_below": 99.0,
+    "top_pct": 1.0,
+    "rank_best": 1
+   },
+   "vs_top50": {
+    "n": 50,
+    "lower": 50,
+    "equal": 0,
+    "higher": 0,
+    "pct_strictly_below": 100.0,
+    "top_pct": 0.0,
+    "rank_best": 1
+   }
+  },
+  "api.kgninja.dev": {
+   "score": 7,
+   "signals": {
+    "llms_txt": 1,
+    "a2a_card": 0,
+    "mcp_registry": 1,
+    "x402_wellknown": 1,
+    "robots_txt": 1,
+    "sitemap_xml": 1,
+    "live402_metadata": 1,
+    "x402scan_listed": 1,
+    "verification_page_heuristic": 0
+   },
+   "rev30": 0.06,
+   "vs_all": {
+    "n": 2735,
+    "lower": 2117,
+    "equal": 289,
+    "higher": 329,
+    "pct_strictly_below": 77.4,
+    "top_pct": 22.6,
+    "rank_best": 330
+   },
+   "vs_reachable": {
+    "n": 2724,
+    "lower": 2106,
+    "equal": 289,
+    "higher": 329,
+    "pct_strictly_below": 77.3,
+    "top_pct": 22.7,
+    "rank_best": 330
+   },
+   "vs_top50": {
+    "n": 50,
+    "lower": 33,
+    "equal": 8,
+    "higher": 9,
+    "pct_strictly_below": 66.0,
+    "top_pct": 34.0,
+    "rank_best": 10
+   }
+  }
+ },
+ "spearman_score_rev_all": 0.297,
+ "spearman_score_rev_reachable": 0.296,
+ "max_score": 9,
+ "hosts_at_max": [
+  "api.oblique.markets",
+  "coil.trade",
+  "api.robinx.io",
+  "humanmirror.fr",
+  "squeezeos-api.onrender.com",
+  "hermesplant.com",
+  "agent.connskill.com",
+  "api.nohumans.directory",
+  "api.babyblueviper.com",
+  "overwing.ai",
+  "sqlguard.io",
+  "proof.platoskallipolis.com",
+  "www.taifoon.io",
+  "coord.taifoon.dev",
+  "getnightshift.tech",
+  "api.avedaris.com",
+  "tolca.tonbot.ca",
+  "api.manylives.me",
+  "money-reactor.makar52nn2016.workers.dev",
+  "skyeskiff.skyemeta.com",
+  "agenttalk.skyemeta.com",
+  "skyemeta.com",
+  "agent-economy.kgninja.dev",
+  "touchstone.locomot.io",
+  "bot-bazaar.fly.dev",
+  "khotem.com",
+  "supplier-payment-verifier-production.up.railway.app",
+  "manylives.me"
+ ],
+ "top50_list": [
+  [
+   "api.bitrefill.com",
+   67000.79,
+   2
+  ],
+  [
+   "www.api-xpay.com",
+   9482.35,
+   4
+  ],
+  [
+   "www.ax1.vc",
+   4120.24,
+   5
+  ],
+  [
+   "keyring-agent.blockchhub.link",
+   1478.2,
+   3
+  ],
+  [
+   "stableenrich.dev",
+   844.65,
+   5
+  ],
+  [
+   "laso.finance",
+   829.86,
+   7
+  ],
+  [
+   "mudko.com",
+   744.95,
+   7
+  ],
+  [
+   "market.datapackvibe.com",
+   694.2,
+   2
+  ],
+  [
+   "blockrun.ai",
+   542.71,
+   7
+  ],
+  [
+   "api.integrityphase.com",
+   515.12,
+   0
+  ],
+  [
+   "api.losbeto.xyz",
+   512.17,
+   8
+  ],
+  [
+   "cheaptokens.ai",
+   448.0,
+   6
+  ],
+  [
+   "agent.pocket.network",
+   334.52,
+   7
+  ],
+  [
+   "api.apify.com",
+   269.0,
+   3
+  ],
+  [
+   "api.youraitools.co",
+   253.64,
+   8
+  ],
+  [
+   "api.strale.io",
+   239.68,
+   8
+  ],
+  [
+   "cloud.trycorpus.ai",
+   235.96,
+   8
+  ],
+  [
+   "x402.orthogonal.com",
+   216.92,
+   1
+  ],
+  [
+   "hubvibe-io.com",
+   182.1,
+   8
+  ],
+  [
+   "agents.chain.link",
+   132.47,
+   2
+  ],
+  [
+   "agi.apify.com",
+   129.0,
+   5
+  ],
+  [
+   "stabletravel.dev",
+   125.4,
+   3
+  ],
+  [
+   "lumierepaycheck.org",
+   116.3,
+   7
+  ],
+  [
+   "api.kadec0.xyz",
+   116.27,
+   4
+  ],
+  [
+   "agent402.tools",
+   110.61,
+   8
+  ],
+  [
+   "api.agents-trust.com",
+   93.92,
+   6
+  ],
+  [
+   "api.myceliasignal.com",
+   92.96,
+   8
+  ],
+  [
+   "x402.aispace.bot",
+   91.77,
+   6
+  ],
+  [
+   "www.x402pulse.dev",
+   84.58,
+   7
+  ],
+  [
+   "vps.phoneagent.xyz",
+   84.02,
+   5
+  ],
+  [
+   "scvd.store",
+   82.99,
+   8
+  ],
+  [
+   "api.arkm.com",
+   81.8,
+   5
+  ],
+  [
+   "api.nansen.ai",
+   80.45,
+   4
+  ],
+  [
+   "seo.openverbs.com",
+   72.51,
+   2
+  ],
+  [
+   "api.onesource.io",
+   70.38,
+   7
+  ],
+  [
+   "enrich-api.interzoid.com",
+   70.0,
+   4
+  ],
+  [
+   "api.x402node.dev",
+   69.49,
+   6
+  ],
+  [
+   "api.craigmbrown.com",
+   60.52,
+   6
+  ],
+  [
+   "api.stocktrends.com",
+   58.58,
+   4
+  ],
+  [
+   "x402.freeq.one",
+   58.58,
+   6
+  ],
+  [
+   "api.exa.ai",
+   57.94,
+   2
+  ],
+  [
+   "google-trends.use.x402atlas.com",
+   53.68,
+   4
+  ],
+  [
+   "api.gondola-ai.com",
+   50.14,
+   6
+  ],
+  [
+   "win.oneshotagent.com",
+   45.63,
+   3
+  ],
+  [
+   "ausca.com",
+   44.85,
+   7
+  ],
+  [
+   "agvps.shveik.dev",
+   40.03,
+   8
+  ],
+  [
+   "x402-api.aubr.ai",
+   39.52,
+   3
+  ],
+  [
+   "x402.twit.sh",
+   39.44,
+   3
+  ],
+  [
+   "api.messari.io",
+   36.6,
+   4
+  ],
+  [
+   "a2apay.io",
+   35.31,
+   2
+  ]
+ ]
+}

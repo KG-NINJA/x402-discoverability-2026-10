@@ -1,4 +1,8 @@
-# x402 エージェント発見可能性調査 2026-10-26 / x402 Agent Discoverability Census 2026-10-26
+# x402 エージェント発見可能性スナップショット調査 2026-10-26 / x402 Agent Discoverability Snapshot Survey 2026-10-26
+
+**本リポジトリは2026-10-26時点の調査記録のみを収録しており、KGシステムの変更履歴ではありません。**
+
+**This repository is a record of the 2026-10-26 discoverability survey only, not a change history of KG's systems.**
 
 ## ⚠️ 利益相反の開示 / Conflict of Interest Disclosure
 
@@ -12,9 +16,9 @@
 
 ### 概要
 
-2026年10月26日（JST）に実施した、Coinbase CDP Bazaar上のx402ホスト全数（2,735ホスト、1,624販売者）を対象としたエージェント発見可能性調査のデータセットです。
+2026年10月26日（JST）に実施した、Coinbase CDP Bazaar上のx402ホストを対象としたエージェント発見可能性スナップショット調査のデータセットです。
 
-各ホストに対して9つの発見可能性シグナル（各1点、均等重み）をチェックし、0〜9点でスコアリングしました。
+スナップショット取得時点でBazaar APIは68,517リソースを報告しましたが、取得できたのは68,511件でした（完全な全数調査ではありません）。これらから抽出された2,735ホスト（1,624販売者）を対象に、9つの発見可能性シグナル（各1点、均等重み）をチェックし、0〜9点でスコアリングしました。
 
 ### 主な結果
 
@@ -25,9 +29,10 @@
 ### 重要な注意事項
 
 1. **利益相反**: 著者はkgninja.devホストの運営者であり、シグナルと重み付けを自ら選定しています。
-2. **「verification page」シグナルはヒューリスティック**: 該当率わずか4.0%と稀少です。このシグナルを除いた8シグナル評価では、307ホストが8/8点を獲得（上位11.2%）。
-3. **存在のみを測定**: ドキュメントの存在を確認するだけで、その品質は評価していません。売上・収益との相関は弱い（Spearman rho = 0.30）。kgninja.devの推定30日間収益は約$0.01〜0.06です。
-4. **単一スナップショット**: 2026-10-26の一時点のみ。一時的なエラーは「不在」としてカウント。MCPマッチングはドメインレベル。x402scanはHTML解析による検出。CDP以外のファシリテーターのみを使用する販売者は対象外。
+2. **不完全なカバレッジ**: Bazaar APIは68,517リソースを報告しましたが、スナップショットには68,511件のみ含まれています（完全な全数調査ではありません）。
+3. **「verification page」シグナルはヒューリスティック**: 該当率わずか4.0%と稀少です。このシグナルを除いた8シグナル評価では、307ホストが8/8点を獲得（上位11.2%）。
+4. **存在のみを測定**: ドキュメントの存在を確認するだけで、その品質は評価していません。売上・収益との相関は弱い（Spearman rho = 0.30）。kgninja.devの推定30日間収益は約$0.01〜0.06です。
+5. **単一スナップショット**: 2026-10-26の一時点のみ。一時的なエラーは「不在」としてカウント。MCPマッチングはドメインレベル。x402scanはHTML解析による検出。CDP以外のファシリテーターのみを使用する販売者は対象外。
 
 ### シグナル別該当率
 
@@ -75,9 +80,9 @@ python3 analyze.py                 # hosts_scored.csv (最終), summary.jsonを�
 
 ### Overview
 
-Dataset from an agent discoverability census of all 2,735 x402 hosts (1,624 sellers by payTo) listed on Coinbase CDP Bazaar, conducted on 2026-10-26 (JST).
+Dataset from an agent discoverability snapshot survey of x402 hosts listed on Coinbase CDP Bazaar, conducted on 2026-10-26 (JST).
 
-Each host was checked against 9 discoverability signals (1 point each, equal weight), scored 0-9.
+The Bazaar API reported 68,517 resources at fetch time, but the snapshot contains 68,511 items (not a complete census). The 2,735 hosts (1,624 sellers by payTo) extracted from this snapshot were checked against 9 discoverability signals (1 point each, equal weight), scored 0-9.
 
 ### Key Results
 
@@ -88,9 +93,10 @@ Each host was checked against 9 discoverability signals (1 point each, equal wei
 ### Important Caveats
 
 1. **Conflict of interest**: The author operates the kgninja.dev hosts and chose the signals and weights.
-2. **Verification page signal is heuristic and rare**: Only 4.0% prevalence. Without this signal, 307 hosts score 8/8 (top 11.2%).
-3. **Measures presence only, not quality**: Does not evaluate document quality. Weak correlation with revenue (Spearman rho = 0.30). kgninja.dev's estimated 30-day revenue is roughly $0.01-0.06.
-4. **Single snapshot**: One-time capture on 2026-10-26. Transient errors count as absent. MCP match is domain-level. x402scan parsed from public HTML. Sellers using only non-CDP facilitators are excluded.
+2. **Incomplete coverage**: The Bazaar API reported 68,517 resources, but the snapshot contains only 68,511 items (not a complete census).
+3. **Verification page signal is heuristic and rare**: Only 4.0% prevalence. Without this signal, 307 hosts score 8/8 (top 11.2%).
+4. **Measures presence only, not quality**: Does not evaluate document quality. Weak correlation with revenue (Spearman rho = 0.30). kgninja.dev's estimated 30-day revenue is roughly $0.01-0.06.
+5. **Single snapshot**: One-time capture on 2026-10-26. Transient errors count as absent. MCP match is domain-level. x402scan parsed from public HTML. Sellers using only non-CDP facilitators are excluded.
 
 ### Signal Prevalence
 

@@ -1,6 +1,8 @@
-# x402 seller agent-discoverability census (2026-10-26, JST)
+# x402 seller agent-discoverability snapshot survey (2026-10-26, JST)
 
-Read-only, reproducible census. No payments, signatures, logins, posts or contact were made.
+**This repository is a record of the 2026-10-26 discoverability survey only, not a change history of KG's systems.**
+
+Read-only, reproducible survey. No payments, signatures, logins, posts or contact were made.
 Paid endpoints were called once WITHOUT payment; only the HTTP 402 challenge was read.
 
 ## 1. Population and snapshots
@@ -9,14 +11,14 @@ Paid endpoints were called once WITHOUT payment; only the HTTP 402 challenge was
 | Source | CDP Bazaar discovery API `https://api.cdp.coinbase.com/platform/v2/x402/discovery/resources` (paged, limit=1000) |
 | Bazaar pull time | 2026-10-26 approx. 15:50-15:51 JST (file written 15:51:18 JST); API reported total 68,517, 68,511 items retrieved |
 | Unit of analysis | distinct hostname of the listed `resource` URL |
-| Population | **all 2,735 hosts** (full population, no sampling, so no random seed is needed) |
+| Population | **2,735 hosts** in the snapshot fetched on 2026-10-26 (68,511 of 68,517 resources the API reported, so not a complete census; no sampling within the snapshot) |
 | Sub-population | top 50 hosts by 30-day estimated revenue (sum over the host's listings of Bazaar `quality.l30DaysTotalCalls` x listed USDC price; includes self-traffic, CDP facilitator only) |
 | Sellers (distinct primary payTo) | 1,624 |
 | MCP Registry snapshot | `registry.modelcontextprotocol.io/v0/servers` full pagination, 2026-10-26 approx. 16:05-16:18 JST, 180,194 entries (all versions), 36,806 distinct remote/website hosts |
 | Host checks | 2026-10-26 16:02-16:06 JST |
 | x402scan checks | 2026-10-26 16:06-16:40 JST, one `x402scan.com/recipient/<payTo>` page per payTo (1,856 payTo) |
 
-Slim Bazaar snapshot (fields used) is in `bazaar_snapshot_slim_2026-10-26.json`.
+Slim Bazaar snapshot (`bazaar_snapshot_slim_2026-10-26.json`, ~55 MB) and MCP Registry snapshot (`mcp_registry_snapshot.json`, ~194 MB) are **not included** in this repository due to size. SHA-256 hashes of the original snapshots used for this survey are recorded in `snapshot_sha256.txt`. Use the fetch scripts to regenerate fresh snapshots (which will differ from the hashed originals).
 
 ## 2. Signals (equal weight, 1 point each, score 0-9)
 A "soft-404" probe (`/__x402_census_404_probe_7f3a`) is fetched first; a page whose body equals the soft-404 body never counts.
@@ -67,6 +69,7 @@ Sensitivity:
 Score vs 30-day estimated revenue, Spearman rho = 0.30 (all hosts): weak positive. KG's hosts earned USD 0.01-0.06 estimated in the window, so a high score does not imply sales.
 
 ## 4. Limitations
+- **Incomplete coverage**: The Bazaar API reported 68,517 resources, but only 68,511 were retrieved in this snapshot. This is not a complete census.
 - Signal set and equal weights were chosen by the requester (KGNINJA). The rarest signal (verification page, 4.0%) is one KG built; the "top 1%" result depends on it (see sensitivity). Any public claim should state the 9 criteria.
 - Bazaar only covers CDP-facilitator listings; sellers not on Bazaar are excluded.
 - One request per check per host; transient errors count as "absent". Checks ran once on 2026-10-26.
@@ -77,9 +80,12 @@ Score vs 30-day estimated revenue, Spearman rho = 0.30 (all hosts): weak positiv
 
 ## 5. Reproduce
 ```
-python3 fetch_bazaar.py            # writes bazaar.json (full pull); then slim it as in this folder, or use the included slim snapshot
+python3 fetch_bazaar.py            # writes bazaar.json (full pull); slim it to bazaar_snapshot_slim_2026-10-26.json
 python3 fetch_mcp_registry.py      # writes mcp_registry_snapshot.json
 python3 check_discoverability.py   # writes raw_checks.json, x402scan_origins.json, hosts.csv
 python3 analyze.py                 # writes hosts_scored.csv (final), summary.json
 ```
-Files: `hosts_scored.csv` (final per-host data, authoritative), `hosts.csv` (pre-MCP-refinement), `raw_checks.json`, `x402scan_origins.json`, `summary.json`, `mcp_registry_snapshot.json`, `bazaar_snapshot_slim_2026-10-26.json`.
+
+**Note**: Large raw snapshots (`bazaar_snapshot_slim_2026-10-26.json` ~55 MB, `mcp_registry_snapshot.json` ~194 MB) are **not included** in this repository. SHA-256 hashes of the originals used for this survey are in `snapshot_sha256.txt`. Running the fetch scripts generates fresh snapshots, which will differ from the hashed originals.
+
+Output files in this repository: `hosts_scored.csv` (final per-host data, authoritative), `hosts.csv` (pre-MCP-refinement), `raw_checks.json`, `x402scan_origins.json`, `summary.json`.

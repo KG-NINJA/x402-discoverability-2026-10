@@ -175,10 +175,12 @@ Large raw snapshots (Bazaar 55MB, MCP Registry 194MB) are not included due to si
 
 ## 著者について / About the Author
 
-<img src="assets/kg-codex-365-day-streak.png" alt="KG's Codex profile showing @kg-ninja with stats: Lifetime tokens 38.2B, Peak tokens 1B, Longest task 10h 37m, and a 365-day consecutive usage streak" width="600">
+<a href="https://chatgpt.com/u/kg-ninja"><img src="assets/kg-codex-365-day-streak.png" alt="KG's Codex profile showing @kg-ninja with stats: Lifetime tokens 38.2B, Peak tokens 1B, Longest task 10h 37m, and a 365-day consecutive usage streak" width="600"></a>
 
 本調査は [KGNINJA](https://github.com/KG-NINJA) により実施されました。上記のスクリーンショットは、Codex を365日連続で使用した記録です。
 
 This survey was conducted by [KGNINJA](https://github.com/KG-NINJA). The screenshot above shows a 365-day consecutive Codex usage streak.
+
+プロフィール / Profile: [chatgpt.com/u/kg-ninja](https://chatgpt.com/u/kg-ninja)
 
 詳細 / More info: [agent-economy.kgninja.dev](https://agent-economy.kgninja.dev)

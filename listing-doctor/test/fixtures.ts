@@ -79,7 +79,7 @@ export const GOOD_402_RESPONSE = JSON.stringify({
   accepts: [
     {
       scheme: 'exact',
-      network: 'base-mainnet',
+      network: 'eip155:8453',
       asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
       payTo: '0x1234567890abcdef1234567890abcdef12345678',
       amount: '10000',
@@ -93,6 +93,7 @@ export const GOOD_402_RESPONSE = JSON.stringify({
     },
   ],
   resource: {
+    resource: 'https://example.com/api/generate',
     description: 'Generate text using AI models',
   },
   extensions: {
@@ -134,6 +135,9 @@ export const GOOD_ENDPOINT_RESPONSES: MockResponses = {
   '/sitemap.xml': { status: 200, body: GOOD_SITEMAP },
   '/api/generate': { status: 402, body: GOOD_402_RESPONSE },
   '/verification-results': { status: 200, body: VERIFICATION_PAGE },
+  '/SKILL.md': { status: 404, body: 'Not Found' },
+  '/skill.md': { status: 404, body: 'Not Found' },
+  '/.well-known/SKILL.md': { status: 404, body: 'Not Found' },
 };
 
 export const NOT_FOUND_RESPONSES: MockResponses = {
@@ -150,19 +154,25 @@ export const NOT_FOUND_RESPONSES: MockResponses = {
   '/verification': { status: 404, body: 'Not Found' },
   '/test-results': { status: 404, body: 'Not Found' },
   '/.well-known/verification.json': { status: 404, body: 'Not Found' },
+  '/SKILL.md': { status: 404, body: 'Not Found' },
+  '/skill.md': { status: 404, body: 'Not Found' },
+  '/.well-known/SKILL.md': { status: 404, body: 'Not Found' },
 };
 
 export const MISSING_SCHEMA_402_RESPONSE = JSON.stringify({
   accepts: [
     {
       scheme: 'exact',
-      network: 'base-mainnet',
+      network: 'eip155:8453',
       asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
       payTo: '0x1234567890abcdef1234567890abcdef12345678',
       amount: '10000',
-      description: 'AI text generation',
+      description: 'AI text generation - no schema provided',
     },
   ],
+  resource: {
+    description: 'Generate text using AI models',
+  },
 });
 
 export const MISSING_SCHEMA_RESPONSES: MockResponses = {
@@ -177,16 +187,63 @@ export const MISSING_SCHEMA_RESPONSES: MockResponses = {
   '/verification': { status: 404, body: 'Not Found' },
   '/test-results': { status: 404, body: 'Not Found' },
   '/.well-known/verification.json': { status: 404, body: 'Not Found' },
+  '/SKILL.md': { status: 404, body: 'Not Found' },
+  '/skill.md': { status: 404, body: 'Not Found' },
+  '/.well-known/SKILL.md': { status: 404, body: 'Not Found' },
 };
+
+export const MISSING_BOTH_SCHEMAS_402 = JSON.stringify({
+  accepts: [
+    {
+      scheme: 'exact',
+      network: 'eip155:8453',
+      asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+      payTo: '0x1234567890abcdef1234567890abcdef12345678',
+      amount: '10000',
+    },
+  ],
+});
+
+export const MISSING_BOTH_SCHEMAS_RESPONSES: MockResponses = {
+  '/__x402_census_404_probe_7f3a': { status: 404, body: 'Not Found' },
+  '/llms.txt': { status: 200, body: GOOD_LLMS_TXT },
+  '/.well-known/agent-card.json': { status: 200, body: GOOD_AGENT_CARD },
+  '/.well-known/x402.json': { status: 200, body: GOOD_X402_WELLKNOWN },
+  '/robots.txt': { status: 200, body: GOOD_ROBOTS_TXT },
+  '/sitemap.xml': { status: 200, body: GOOD_SITEMAP },
+  '/api/generate': { status: 402, body: MISSING_BOTH_SCHEMAS_402 },
+  '/verification-results': { status: 404, body: 'Not Found' },
+  '/verification': { status: 404, body: 'Not Found' },
+  '/test-results': { status: 404, body: 'Not Found' },
+  '/.well-known/verification.json': { status: 404, body: 'Not Found' },
+  '/SKILL.md': { status: 404, body: 'Not Found' },
+  '/skill.md': { status: 404, body: 'Not Found' },
+  '/.well-known/SKILL.md': { status: 404, body: 'Not Found' },
+};
+
+export const LLMS_TXT_WITH_PRICE = `# Agent API Service
+
+This service provides paid AI agent capabilities via x402 protocol.
+
+## Pricing
+All endpoints are priced at 0.01 USDC per call (10000 atomic USDC).
+Network: eip155:8453 (Base mainnet)
+Asset: 0x833589fcd6edb6e08f4c7c32d4f71b54bda02913 (USDC)
+payTo: 0x1234567890abcdef1234567890abcdef12345678
+
+## Endpoints
+- /api/generate - Text generation endpoint
+`;
 
 export const PRICE_MISMATCH_402_RESPONSE = JSON.stringify({
   accepts: [
     {
       scheme: 'exact',
-      network: 'base-mainnet',
+      network: 'eip155:8453',
       asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-      payTo: '0x1234567890abcdef1234567890abcdef12345678',
-      amount: '999999999',
+      payTo: '0xDEADBEEF90abcdef1234567890abcdef12345678',
+      amount: '50000',
+      description: 'Different price than advertised',
       outputSchema: { type: 'object' },
     },
   ],
@@ -196,23 +253,37 @@ export const PRICE_MISMATCH_402_RESPONSE = JSON.stringify({
   extensions: {
     bazaar: {
       info: {
+        input: { type: 'object' },
         output: { type: 'object' },
       },
     },
   },
 });
 
+export const X402_WELLKNOWN_WITH_PRICE = JSON.stringify({
+  x402Version: 2,
+  resources: [
+    {
+      resource: 'https://example.com/api/generate',
+      method: 'POST',
+      accepts: [
+        {
+          scheme: 'exact',
+          network: 'eip155:8453',
+          amount: '10000',
+          asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+          payTo: '0x1234567890abcdef1234567890abcdef12345678',
+        },
+      ],
+    },
+  ],
+});
+
 export const PRICE_MISMATCH_RESPONSES: MockResponses = {
   '/__x402_census_404_probe_7f3a': { status: 404, body: 'Not Found' },
-  '/llms.txt': { status: 200, body: GOOD_LLMS_TXT },
+  '/llms.txt': { status: 200, body: LLMS_TXT_WITH_PRICE },
   '/.well-known/agent-card.json': { status: 200, body: GOOD_AGENT_CARD },
-  '/.well-known/x402.json': {
-    status: 200,
-    body: JSON.stringify({
-      version: '2',
-      endpoints: [{ path: '/api/generate', price: '0.01', currency: 'USDC' }],
-    }),
-  },
+  '/.well-known/x402.json': { status: 200, body: X402_WELLKNOWN_WITH_PRICE },
   '/robots.txt': { status: 200, body: GOOD_ROBOTS_TXT },
   '/sitemap.xml': { status: 200, body: GOOD_SITEMAP },
   '/api/generate': { status: 402, body: PRICE_MISMATCH_402_RESPONSE },
@@ -220,4 +291,39 @@ export const PRICE_MISMATCH_RESPONSES: MockResponses = {
   '/verification': { status: 404, body: 'Not Found' },
   '/test-results': { status: 404, body: 'Not Found' },
   '/.well-known/verification.json': { status: 404, body: 'Not Found' },
+  '/SKILL.md': { status: 404, body: 'Not Found' },
+  '/skill.md': { status: 404, body: 'Not Found' },
+  '/.well-known/SKILL.md': { status: 404, body: 'Not Found' },
 };
+
+export const INVALID_NETWORK_402 = JSON.stringify({
+  accepts: [
+    {
+      scheme: 'exact',
+      network: 'invalid-network-xyz',
+      asset: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+      payTo: '0x1234567890abcdef1234567890abcdef12345678',
+      amount: '10000',
+      description: 'Invalid network',
+      outputSchema: { type: 'object' },
+    },
+  ],
+  resource: { description: 'Test' },
+  extensions: { bazaar: { info: { input: {}, output: {} } } },
+});
+
+export const INVALID_ADDRESS_402 = JSON.stringify({
+  accepts: [
+    {
+      scheme: 'exact',
+      network: 'eip155:8453',
+      asset: 'not-a-valid-address',
+      payTo: 'also-not-valid',
+      amount: '10000',
+      description: 'Invalid addresses',
+      outputSchema: { type: 'object' },
+    },
+  ],
+  resource: { description: 'Test' },
+  extensions: { bazaar: { info: { input: {}, output: {} } } },
+});

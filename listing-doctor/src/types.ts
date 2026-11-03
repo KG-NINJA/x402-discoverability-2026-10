@@ -30,12 +30,50 @@ export interface CheckResult {
   confirmed: ConfirmedSignal[];
   couldNotConfirm: UnconfirmedSignal[];
   fixes: Fix[];
+  x402Validation?: X402ValidationResult;
   rawSignals: Record<string, SignalResult>;
   checkedAt: string;
   note: {
     en: string;
     ja: string;
   };
+}
+
+export interface X402ValidationResult {
+  httpStatus: number;
+  hasAcceptsArray: boolean;
+  hasInputSchema: boolean;
+  hasOutputSchema: boolean;
+  hasDescription: boolean;
+  networkValid: boolean;
+  assetValid: boolean;
+  payToValid: boolean;
+  resourceUrlMatches: boolean;
+  priceConsistency: PriceConsistencyResult;
+  issues: X402Issue[];
+  parsed402?: Partial<X402PaymentRequired>;
+}
+
+export interface PriceConsistencyResult {
+  checked: boolean;
+  consistent: boolean;
+  sources: PriceSource[];
+  details?: string;
+}
+
+export interface PriceSource {
+  source: string;
+  amount?: string;
+  asset?: string;
+  network?: string;
+  payTo?: string;
+}
+
+export interface X402Issue {
+  severity: 'high' | 'medium' | 'low';
+  code: string;
+  en: string;
+  ja: string;
 }
 
 export interface ConfirmedSignal {

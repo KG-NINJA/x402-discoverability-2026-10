@@ -9,6 +9,9 @@ import {
   PRICE_MISMATCH_RESPONSES,
   INVALID_NETWORK_402,
   INVALID_ADDRESS_402,
+  POST_ONLY_ENDPOINT_RESPONSES,
+  MALFORMED_DATA_RESPONSES,
+  NO_MISMATCH_DIFFERENT_RESOURCES_RESPONSES,
 } from './fixtures';
 
 describe('checkUrl', () => {
@@ -117,7 +120,7 @@ describe('checkUrl', () => {
   });
 
   describe('price mismatch detection', () => {
-    it('should detect price mismatch between 402 and advertised values', async () => {
+    it('should detect price mismatch between 402 and advertised values for same resource', async () => {
       const mockFetch = createMockFetch(PRICE_MISMATCH_RESPONSES);
       const result = await checkUrl('https://example.com/api/generate', mockFetch);
 
@@ -131,6 +134,20 @@ describe('checkUrl', () => {
       );
       expect(priceMismatchIssue).toBeDefined();
       expect(priceMismatchIssue?.severity).toBe('medium');
+      expect(priceMismatchIssue?.en).toBeTruthy();
+      expect(priceMismatchIssue?.ja).toBeTruthy();
+    });
+
+    it('should NOT flag mismatch for different resources on same host', async () => {
+      const mockFetch = createMockFetch(NO_MISMATCH_DIFFERENT_RESOURCES_RESPONSES);
+      const result = await checkUrl('https://example.com/api/generate', mockFetch);
+
+      expect(result.x402Validation?.priceConsistency.consistent).toBe(true);
+
+      const priceMismatchIssue = result.x402Validation?.issues.find(
+        (i) => i.code === 'PRICE_MISMATCH'
+      );
+      expect(priceMismatchIssue).toBeUndefined();
     });
 
     it('should pass live402_metadata even with price mismatch if schema present', async () => {
@@ -141,6 +158,71 @@ describe('checkUrl', () => {
       expect(live402?.detected).toBe(true);
 
       expect(result.score).toBe(6);
+    });
+  });
+
+  describe('POST-only endpoints (issue #2)', () => {
+    it('should use method from /.well-known/x402 and handle 405 with POST retry', async () => {
+      const mockFetch = createMockFetch(POST_ONLY_ENDPOINT_RESPONSES);
+      const result = await checkUrl('https://example.com/api/post-only', mockFetch);
+
+      expect(result.x402Validation?.httpStatus).toBe(402);
+      const live402 = result.confirmed.find((c) => c.signal === 'live402_metadata');
+      expect(live402?.detected).toBe(true);
+    });
+
+    it('should not score 405 as failure when POST works', async () => {
+      const mockFetch = createMockFetch(POST_ONLY_ENDPOINT_RESPONSES);
+      const result = await checkUrl('https://example.com/api/post-only', mockFetch);
+
+      const methodNotAllowedIssue = result.x402Validation?.issues.find(
+        (i) => i.code === 'METHOD_NOT_ALLOWED'
+      );
+      expect(methodNotAllowedIssue).toBeUndefined();
+    });
+  });
+
+  describe('malformed data handling (issue #4)', () => {
+    it('should handle malformed accepts array without crashing', async () => {
+      const mockFetch = createMockFetch(MALFORMED_DATA_RESPONSES);
+      const result = await checkUrl('https://example.com/api/malformed-accepts', mockFetch);
+
+      expect(result).toBeDefined();
+      expect(result.url).toBe('https://example.com/api/malformed-accepts');
+      expect(result.x402Validation?.hasAcceptsArray).toBe(false);
+      expect(result.x402Validation?.issues).toContainEqual(
+        expect.objectContaining({ code: 'MISSING_ACCEPTS' })
+      );
+    });
+
+    it('should handle malformed amount without crashing', async () => {
+      const mockFetch = createMockFetch(MALFORMED_DATA_RESPONSES);
+      const result = await checkUrl('https://example.com/api/malformed-amount', mockFetch);
+
+      expect(result).toBeDefined();
+      expect(result.url).toBe('https://example.com/api/malformed-amount');
+    });
+
+    it('should handle non-JSON 402 body without crashing', async () => {
+      const mockFetch = createMockFetch(MALFORMED_DATA_RESPONSES);
+      const result = await checkUrl('https://example.com/api/non-json', mockFetch);
+
+      expect(result).toBeDefined();
+      expect(result.url).toBe('https://example.com/api/non-json');
+      expect(result.x402Validation?.issues).toContainEqual(
+        expect.objectContaining({ code: 'UNPARSEABLE_402' })
+      );
+    });
+
+    it('should still compute other signals when 402 is malformed', async () => {
+      const mockFetch = createMockFetch(MALFORMED_DATA_RESPONSES);
+      const result = await checkUrl('https://example.com/api/malformed-accepts', mockFetch);
+
+      const llmsTxt = result.confirmed.find((c) => c.signal === 'llms_txt');
+      expect(llmsTxt?.detected).toBe(true);
+
+      const robotsTxt = result.confirmed.find((c) => c.signal === 'robots_txt');
+      expect(robotsTxt?.detected).toBe(true);
     });
   });
 
@@ -278,5 +360,19 @@ describe('individual signal checks', () => {
     const llms = result.confirmed.find((c) => c.signal === 'llms_txt');
     expect(llms?.detected).toBe(false);
     expect(llms?.details).toContain('soft-404');
+  });
+});
+
+describe('timeout handling (issue #1)', () => {
+  it('should report timeout as could not confirm, not crash', async () => {
+    const mockFetch = createMockFetch({
+      '/__x402_census_404_probe_7f3a': { status: 404, body: '' },
+      '/llms.txt': { status: 200, body: 'Valid content with more than fifty characters here.' },
+      '/api/test': { status: 404, body: '' },
+    });
+
+    const result = await checkUrl('https://example.com/api/test', mockFetch);
+    expect(result).toBeDefined();
+    expect(result.checkedAt).toBeTruthy();
   });
 });

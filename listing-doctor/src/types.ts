@@ -67,6 +67,8 @@ export interface PriceSource {
   asset?: string;
   network?: string;
   payTo?: string;
+  normalizedUrl?: string;
+  method?: string;
 }
 
 export interface X402Issue {
@@ -105,6 +107,7 @@ export interface X402PaymentRequired {
     };
   }>;
   resource?: {
+    resource?: string;
     description?: string;
   };
   extensions?: {

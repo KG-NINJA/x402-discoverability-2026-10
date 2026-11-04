@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "_comment": "Draft MCP tool definition for check_listing. This is for KG Agent Exchange integration planning only - do not add to any MCP server without review.",
+  "tool": {
+    "name": "check_listing",
+    "description": "Check whether an x402 paid endpoint is discoverable and properly configured, using the 9-signal scoring criteria from the 2026-10-26 survey of 2,735 hosts. Returns a score (0-7 checkable signals), confirmed observations, unverified signals, and concrete fix suggestions in Japanese and English.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "The HTTPS URL of the x402 paid endpoint to check. The checker will fetch this URL without payment and inspect the 402 response, plus check host-level discovery files (/llms.txt, /.well-known/agent-card.json, etc.)."
+        }
+      },
+      "required": ["url"],
+      "additionalProperties": false
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "The URL that was checked"
+        },
+        "host": {
+          "type": "string",
+          "description": "The hostname extracted from the URL"
+        },
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7,
+          "description": "Number of checkable signals that were detected (out of 7)"
+        },
+        "maxScore": {
+          "type": "integer",
+          "description": "Maximum possible score for checkable signals (7)"
+        },
+        "percentile": {
+          "type": "string",
+          "description": "Approximate percentile based on the 2026-10-26 survey score distribution"
+        },
+        "confirmed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "signal": { "type": "string" },
+              "detected": { "type": "boolean" },
+              "details": { "type": "string" }
+            }
+          },
+          "description": "Signals that were checked and their detection status"
+        },
+        "couldNotConfirm": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "signal": { "type": "string" },
+              "reason": {
+                "type": "object",
+                "properties": {
+                  "en": { "type": "string" },
+                  "ja": { "type": "string" }
+                }
+              }
+            }
+          },
+          "description": "Signals that require external data and were not verified (mcp_registry, x402scan_listed)"
+        },
+        "fixes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "signal": { "type": "string" },
+              "en": { "type": "string" },
+              "ja": { "type": "string" }
+            }
+          },
+          "description": "Suggested fixes for missing signals, in Japanese and English"
+        },
+        "rawSignals": {
+          "type": "object",
+          "description": "Raw signal results with detection status and details"
+        },
+        "checkedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp of when the check was performed"
+        },
+        "note": {
+          "type": "object",
+          "properties": {
+            "en": { "type": "string" },
+            "ja": { "type": "string" }
+          },
+          "description": "Caveats and limitations of this check in Japanese and English"
+        }
+      },
+      "required": ["url", "host", "score", "maxScore", "confirmed", "couldNotConfirm", "fixes", "checkedAt", "note"]
+    },
+    "annotations": {
+      "category": "x402",
+      "pricing": {
+        "amount": "0.01",
+        "currency": "USDC",
+        "network": "base-mainnet"
+      },
+      "rateLimit": {
+        "requestsPerMinute": 10
+      },
+      "examples": [
+        {
+          "input": { "url": "https://agent-economy.kgninja.dev/paid/echo" },
+          "description": "Check a KGNINJA endpoint that scored 9/9 in the survey"
+        },
+        {
+          "input": { "url": "https://api.bitrefill.com/v2/x402/products" },
+          "description": "Check a high-revenue endpoint from the survey"
+        }
+      ]
+    }
+  }
+}

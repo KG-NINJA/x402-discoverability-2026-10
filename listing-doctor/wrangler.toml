@@ -1,0 +1,18 @@
+name = "listing-doctor"
+main = "src/index.ts"
+compatibility_date = "2026-11-03"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[observability.traces]
+enabled = true
+
+[vars]
+# Paywall configuration - OFF by default for preview
+PAYWALL_ENABLED = "false"
+PAYWALL_PRICE_USDC = "0.01"
+PAYWALL_PAY_TO = "0x4D7d842536De9Eb491AE2300126B3CDdE7B0aDE3"
+PAYWALL_NETWORK = "base-mainnet"
+PAYWALL_ASSET = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"

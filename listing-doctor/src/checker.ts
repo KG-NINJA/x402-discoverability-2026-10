@@ -15,7 +15,9 @@ import {
   CHECKABLE_SIGNALS,
 } from './scoring';
 
-const TIMEOUT_MS = 8000;
+const REQUEST_TIMEOUT_MS = 8000;
+const BODY_READ_TIMEOUT_MS = 5000;
+const MAX_BODY_BYTES = 512 * 1024;
 const UA = 'x402-listing-doctor/1.0 (read-only check; no payment)';
 
 const KNOWN_NETWORKS = new Set([
@@ -58,13 +60,19 @@ export interface FetchLike {
   (input: RequestInfo, init?: RequestInit): Promise<Response>;
 }
 
+export interface FetchResult {
+  response: Response | null;
+  error?: string;
+  timedOut?: boolean;
+}
+
 async function safeFetch(
   fetchFn: FetchLike,
   url: string,
   options?: RequestInit
-): Promise<Response | null> {
+): Promise<FetchResult> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
     const resp = await fetchFn(url, {
       ...options,
@@ -76,38 +84,82 @@ async function safeFetch(
       redirect: 'follow',
     });
     clearTimeout(timeoutId);
-    return resp;
-  } catch {
+    return { response: resp };
+  } catch (err) {
     clearTimeout(timeoutId);
-    return null;
+    const isAbort = err instanceof Error && err.name === 'AbortError';
+    return {
+      response: null,
+      error: isAbort ? 'Request timed out' : String(err),
+      timedOut: isAbort,
+    };
   }
 }
 
-async function getText(resp: Response | null, maxBytes = 512 * 1024): Promise<string> {
-  if (!resp) return '';
+async function getTextWithTimeout(
+  resp: Response | null,
+  maxBytes = MAX_BODY_BYTES,
+  timeoutMs = BODY_READ_TIMEOUT_MS
+): Promise<{ text: string; timedOut: boolean; error?: string }> {
+  if (!resp) return { text: '', timedOut: false };
+
+  const deadline = Date.now() + timeoutMs;
+
   try {
     const reader = resp.body?.getReader();
-    if (!reader) return '';
+    if (!reader) return { text: '', timedOut: false };
+
     const chunks: Uint8Array[] = [];
     let total = 0;
+
     while (total < maxBytes) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      total += value.length;
+      if (Date.now() > deadline) {
+        reader.releaseLock();
+        return {
+          text: new TextDecoder('utf-8').decode(mergeChunks(chunks, total)),
+          timedOut: true,
+          error: 'Body read timed out',
+        };
+      }
+
+      const readPromise = reader.read();
+      const timeoutPromise = new Promise<{ done: true; value: undefined }>((resolve) =>
+        setTimeout(() => resolve({ done: true, value: undefined }), Math.max(0, deadline - Date.now()))
+      );
+
+      const result = await Promise.race([readPromise, timeoutPromise]);
+
+      if (result.done) {
+        if (Date.now() > deadline && total === 0) {
+          reader.releaseLock();
+          return { text: '', timedOut: true, error: 'Body read timed out' };
+        }
+        break;
+      }
+
+      if (result.value) {
+        chunks.push(result.value);
+        total += result.value.length;
+      }
+
       if (total >= maxBytes) break;
     }
+
     reader.releaseLock();
-    const merged = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      merged.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return new TextDecoder('utf-8').decode(merged);
-  } catch {
-    return '';
+    return { text: new TextDecoder('utf-8').decode(mergeChunks(chunks, total)), timedOut: false };
+  } catch (err) {
+    return { text: '', timedOut: false, error: String(err) };
   }
+}
+
+function mergeChunks(chunks: Uint8Array[], total: number): Uint8Array {
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged;
 }
 
 function isHtml(text: string): boolean {
@@ -115,11 +167,43 @@ function isHtml(text: string): boolean {
   return t.startsWith('<!doctype') || t.startsWith('<html') || t.includes('<head');
 }
 
-function parseJson(text: string): unknown | null {
+function safeParseJson(text: string): { value: unknown | null; error?: string } {
   try {
-    return JSON.parse(text);
+    return { value: JSON.parse(text) };
+  } catch (err) {
+    return { value: null, error: String(err) };
+  }
+}
+
+function isObject(val: unknown): val is Record<string, unknown> {
+  return val !== null && typeof val === 'object' && !Array.isArray(val);
+}
+
+function isArray(val: unknown): val is unknown[] {
+  return Array.isArray(val);
+}
+
+function safeString(val: unknown): string | undefined {
+  if (typeof val === 'string') return val;
+  if (typeof val === 'number') return String(val);
+  return undefined;
+}
+
+function safeNumber(val: unknown): number | undefined {
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string') {
+    const n = parseFloat(val);
+    return isNaN(n) ? undefined : n;
+  }
+  return undefined;
+}
+
+function normalizeResourceUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}${u.pathname}`.toLowerCase();
   } catch {
-    return null;
+    return url.toLowerCase();
   }
 }
 
@@ -128,21 +212,34 @@ export async function checkLlmsTxt(
   baseUrl: string,
   soft404Body: string | null
 ): Promise<SignalResult> {
-  const resp = await safeFetch(fetchFn, `${baseUrl}/llms.txt`);
-  if (!resp || resp.status !== 200) {
-    return { detected: false, details: resp ? `HTTP ${resp.status} observed` : 'Request failed or timed out' };
+  try {
+    const { response, error, timedOut } = await safeFetch(fetchFn, `${baseUrl}/llms.txt`);
+    if (timedOut) {
+      return { detected: false, details: 'Could not confirm (request timed out)' };
+    }
+    if (!response) {
+      return { detected: false, details: error || 'Request failed' };
+    }
+    if (response.status !== 200) {
+      return { detected: false, details: `HTTP ${response.status} observed` };
+    }
+    const { text, timedOut: bodyTimedOut } = await getTextWithTimeout(response);
+    if (bodyTimedOut) {
+      return { detected: false, details: 'Could not confirm (body read timed out)' };
+    }
+    if (soft404Body && text.trim() === soft404Body) {
+      return { detected: false, details: 'Response matches soft-404 pattern' };
+    }
+    if (isHtml(text)) {
+      return { detected: false, details: 'Response appears to be HTML, not plain text' };
+    }
+    if (text.trim().length < 50) {
+      return { detected: false, details: `Content too short (${text.trim().length} chars, need >=50)` };
+    }
+    return { detected: true, details: `Found ${text.trim().length} chars of llms.txt content` };
+  } catch (err) {
+    return { detected: false, details: `Error checking llms.txt: ${String(err)}` };
   }
-  const text = await getText(resp);
-  if (soft404Body && text.trim() === soft404Body) {
-    return { detected: false, details: 'Response matches soft-404 pattern' };
-  }
-  if (isHtml(text)) {
-    return { detected: false, details: 'Response appears to be HTML, not plain text' };
-  }
-  if (text.trim().length < 50) {
-    return { detected: false, details: `Content too short (${text.trim().length} chars, need >=50)` };
-  }
-  return { detected: true, details: `Found ${text.trim().length} chars of llms.txt content` };
 }
 
 export async function checkA2aCard(
@@ -150,46 +247,136 @@ export async function checkA2aCard(
   baseUrl: string,
   soft404Body: string | null
 ): Promise<{ result: SignalResult; cardText: string }> {
-  for (const path of ['/.well-known/agent-card.json', '/.well-known/agent.json']) {
-    const resp = await safeFetch(fetchFn, `${baseUrl}${path}`);
-    if (!resp || resp.status !== 200) continue;
-    const text = await getText(resp);
-    if (soft404Body && text.trim() === soft404Body) continue;
-    const json = parseJson(text);
-    if (!json || typeof json !== 'object' || Array.isArray(json)) continue;
-    const obj = json as Record<string, unknown>;
-    if (
-      obj.name &&
-      (obj.skills !== undefined || obj.capabilities !== undefined || obj.url !== undefined)
-    ) {
-      return {
-        result: { detected: true, details: `Found valid A2A card at ${path}` },
-        cardText: text,
-      };
+  try {
+    for (const path of ['/.well-known/agent-card.json', '/.well-known/agent.json']) {
+      const { response, timedOut } = await safeFetch(fetchFn, `${baseUrl}${path}`);
+      if (timedOut) continue;
+      if (!response || response.status !== 200) continue;
+
+      const { text, timedOut: bodyTimedOut } = await getTextWithTimeout(response);
+      if (bodyTimedOut) continue;
+      if (soft404Body && text.trim() === soft404Body) continue;
+
+      const { value: json } = safeParseJson(text);
+      if (!isObject(json)) continue;
+
+      if (
+        json.name &&
+        (json.skills !== undefined || json.capabilities !== undefined || json.url !== undefined)
+      ) {
+        return {
+          result: { detected: true, details: `Found valid A2A card at ${path}` },
+          cardText: text,
+        };
+      }
     }
+    return {
+      result: { detected: false, details: 'No valid A2A card observed at /.well-known/agent-card.json or agent.json' },
+      cardText: '',
+    };
+  } catch (err) {
+    return {
+      result: { detected: false, details: `Error checking A2A card: ${String(err)}` },
+      cardText: '',
+    };
   }
-  return {
-    result: { detected: false, details: 'No valid A2A card observed at /.well-known/agent-card.json or agent.json' },
-    cardText: '',
-  };
 }
 
-export async function checkX402Wellknown(
+export interface X402WellknownResult {
+  result: SignalResult;
+  content: unknown | null;
+  resources: X402Resource[];
+}
+
+export interface X402Resource {
+  resource: string;
+  method: string;
+  normalizedUrl: string;
+  accepts: X402Accept[];
+}
+
+export interface X402Accept {
+  amount?: string;
+  asset?: string;
+  network?: string;
+  payTo?: string;
+}
+
+function parseX402WellknownResources(json: unknown): X402Resource[] {
+  const resources: X402Resource[] = [];
+  if (!isObject(json)) return resources;
+
+  const rawResources = json.resources;
+  if (!isArray(rawResources)) return resources;
+
+  for (const res of rawResources) {
+    if (!isObject(res)) continue;
+    const resourceUrl = safeString(res.resource);
+    const method = safeString(res.method) || 'GET';
+    if (!resourceUrl) continue;
+
+    const accepts: X402Accept[] = [];
+    const rawAccepts = res.accepts;
+    if (isArray(rawAccepts)) {
+      for (const acc of rawAccepts) {
+        if (!isObject(acc)) continue;
+        accepts.push({
+          amount: safeString(acc.amount),
+          asset: safeString(acc.asset)?.toLowerCase(),
+          network: safeString(acc.network),
+          payTo: safeString(acc.payTo)?.toLowerCase(),
+        });
+      }
+    }
+
+    resources.push({
+      resource: resourceUrl,
+      method: method.toUpperCase(),
+      normalizedUrl: normalizeResourceUrl(resourceUrl),
+      accepts,
+    });
+  }
+
+  return resources;
+}
+
+export async function checkX402WellknownWithContent(
   fetchFn: FetchLike,
   baseUrl: string,
   soft404Body: string | null
-): Promise<SignalResult> {
-  for (const path of ['/.well-known/x402', '/.well-known/x402.json']) {
-    const resp = await safeFetch(fetchFn, `${baseUrl}${path}`);
-    if (!resp || resp.status !== 200) continue;
-    const text = await getText(resp);
-    if (soft404Body && text.trim() === soft404Body) continue;
-    const json = parseJson(text);
-    if (json && ((typeof json === 'object' && Object.keys(json as object).length > 0) || (Array.isArray(json) && json.length > 0))) {
-      return { detected: true, details: `Found non-empty JSON at ${path}` };
+): Promise<X402WellknownResult> {
+  try {
+    for (const path of ['/.well-known/x402', '/.well-known/x402.json']) {
+      const { response, timedOut } = await safeFetch(fetchFn, `${baseUrl}${path}`);
+      if (timedOut) continue;
+      if (!response || response.status !== 200) continue;
+
+      const { text, timedOut: bodyTimedOut } = await getTextWithTimeout(response);
+      if (bodyTimedOut) continue;
+      if (soft404Body && text.trim() === soft404Body) continue;
+
+      const { value: json } = safeParseJson(text);
+      if (json && (isObject(json) || isArray(json))) {
+        const resources = parseX402WellknownResources(json);
+        return {
+          result: { detected: true, details: `Found non-empty JSON at ${path}` },
+          content: json,
+          resources,
+        };
+      }
     }
+    return {
+      result: { detected: false, details: 'No non-empty x402 config observed at /.well-known/x402 or x402.json' },
+      content: null,
+      resources: [],
+    };
+  } catch (err) {
+    return {
+      result: { detected: false, details: `Error checking x402 wellknown: ${String(err)}` },
+      content: null,
+      resources: [],
+    };
   }
-  return { detected: false, details: 'No non-empty x402 config observed at /.well-known/x402 or x402.json' };
 }
 
 export async function checkRobotsTxt(
@@ -197,24 +384,35 @@ export async function checkRobotsTxt(
   baseUrl: string,
   soft404Body: string | null
 ): Promise<{ result: SignalResult; robotsText: string }> {
-  const resp = await safeFetch(fetchFn, `${baseUrl}/robots.txt`);
-  if (!resp || resp.status !== 200) {
-    return {
-      result: { detected: false, details: resp ? `HTTP ${resp.status} observed` : 'Request failed or timed out' },
-      robotsText: '',
-    };
+  try {
+    const { response, error, timedOut } = await safeFetch(fetchFn, `${baseUrl}/robots.txt`);
+    if (timedOut) {
+      return { result: { detected: false, details: 'Could not confirm (request timed out)' }, robotsText: '' };
+    }
+    if (!response) {
+      return { result: { detected: false, details: error || 'Request failed' }, robotsText: '' };
+    }
+    if (response.status !== 200) {
+      return { result: { detected: false, details: `HTTP ${response.status} observed` }, robotsText: '' };
+    }
+
+    const { text, timedOut: bodyTimedOut } = await getTextWithTimeout(response);
+    if (bodyTimedOut) {
+      return { result: { detected: false, details: 'Could not confirm (body read timed out)' }, robotsText: '' };
+    }
+    if (soft404Body && text.trim() === soft404Body) {
+      return { result: { detected: false, details: 'Response matches soft-404 pattern' }, robotsText: '' };
+    }
+    if (isHtml(text)) {
+      return { result: { detected: false, details: 'Response appears to be HTML' }, robotsText: '' };
+    }
+    if (!/^\s*user-agent\s*:/im.test(text)) {
+      return { result: { detected: false, details: 'No User-agent directive observed in robots.txt' }, robotsText: '' };
+    }
+    return { result: { detected: true, details: 'Valid robots.txt with User-agent directive observed' }, robotsText: text };
+  } catch (err) {
+    return { result: { detected: false, details: `Error checking robots.txt: ${String(err)}` }, robotsText: '' };
   }
-  const text = await getText(resp);
-  if (soft404Body && text.trim() === soft404Body) {
-    return { result: { detected: false, details: 'Response matches soft-404 pattern' }, robotsText: '' };
-  }
-  if (isHtml(text)) {
-    return { result: { detected: false, details: 'Response appears to be HTML' }, robotsText: '' };
-  }
-  if (!/^\s*user-agent\s*:/im.test(text)) {
-    return { result: { detected: false, details: 'No User-agent directive observed in robots.txt' }, robotsText: '' };
-  }
-  return { result: { detected: true, details: 'Valid robots.txt with User-agent directive observed' }, robotsText: text };
 }
 
 export async function checkSitemapXml(
@@ -223,21 +421,35 @@ export async function checkSitemapXml(
   soft404Body: string | null,
   robotsText: string
 ): Promise<SignalResult> {
-  const sitemapMatch = robotsText.match(/^\s*sitemap\s*:\s*(\S+)/im);
-  const sitemapUrl = sitemapMatch ? sitemapMatch[1] : `${baseUrl}/sitemap.xml`;
+  try {
+    const sitemapMatch = robotsText.match(/^\s*sitemap\s*:\s*(\S+)/im);
+    const sitemapUrl = sitemapMatch ? sitemapMatch[1] : `${baseUrl}/sitemap.xml`;
 
-  const resp = await safeFetch(fetchFn, sitemapUrl);
-  if (!resp || resp.status !== 200) {
-    return { detected: false, details: resp ? `HTTP ${resp.status} observed for sitemap` : 'Request failed or timed out' };
+    const { response, error, timedOut } = await safeFetch(fetchFn, sitemapUrl);
+    if (timedOut) {
+      return { detected: false, details: 'Could not confirm (request timed out)' };
+    }
+    if (!response) {
+      return { detected: false, details: error || 'Request failed' };
+    }
+    if (response.status !== 200) {
+      return { detected: false, details: `HTTP ${response.status} observed for sitemap` };
+    }
+
+    const { text, timedOut: bodyTimedOut } = await getTextWithTimeout(response);
+    if (bodyTimedOut) {
+      return { detected: false, details: 'Could not confirm (body read timed out)' };
+    }
+    if (soft404Body && text.trim() === soft404Body) {
+      return { detected: false, details: 'Response matches soft-404 pattern' };
+    }
+    if (text.includes('<urlset') || text.includes('<sitemapindex')) {
+      return { detected: true, details: 'Valid XML sitemap observed' };
+    }
+    return { detected: false, details: 'Sitemap response does not contain <urlset> or <sitemapindex>' };
+  } catch (err) {
+    return { detected: false, details: `Error checking sitemap: ${String(err)}` };
   }
-  const text = await getText(resp);
-  if (soft404Body && text.trim() === soft404Body) {
-    return { detected: false, details: 'Response matches soft-404 pattern' };
-  }
-  if (text.includes('<urlset') || text.includes('<sitemapindex')) {
-    return { detected: true, details: 'Valid XML sitemap observed' };
-  }
-  return { detected: false, details: 'Sitemap response does not contain <urlset> or <sitemapindex>' };
 }
 
 export interface Live402Result {
@@ -247,190 +459,245 @@ export interface Live402Result {
   hasInputSchema: boolean;
   hasOutputSchema: boolean;
   hasDescription: boolean;
+  methodUsed: string;
+  retriedWithPost: boolean;
+}
+
+function parse402Response(text: string, header: string | null): X402PaymentRequired | null {
+  if (header) {
+    try {
+      const padded = header + '==='.slice(0, (4 - (header.length % 4)) % 4);
+      const decoded = atob(padded);
+      const parsed = JSON.parse(decoded);
+      if (isObject(parsed)) return parsed as X402PaymentRequired;
+    } catch {
+      // Fall through to body parsing
+    }
+  }
+
+  const { value } = safeParseJson(text);
+  if (isObject(value)) return value as X402PaymentRequired;
+  return null;
+}
+
+function extract402Metadata(pr: X402PaymentRequired): {
+  hasInputSchema: boolean;
+  hasOutputSchema: boolean;
+  hasDescription: boolean;
+} {
+  let hasInputSchema = false;
+  let hasOutputSchema = false;
+  let hasDescription = false;
+
+  try {
+    const accepts = isArray(pr.accepts) ? pr.accepts : [];
+    const acc0 = accepts.length > 0 && isObject(accepts[0]) ? accepts[0] : null;
+
+    const resourceObj = isObject(pr.resource) ? pr.resource : null;
+    const resourceDesc = safeString(resourceObj?.description) || safeString(acc0?.description);
+    hasDescription = Boolean(resourceDesc && resourceDesc.trim());
+
+    const extensions = isObject(pr.extensions) ? pr.extensions : null;
+    const bazaar = isObject(extensions?.bazaar) ? extensions.bazaar : null;
+    const bazaarInfo = isObject(bazaar?.info) ? bazaar.info : null;
+
+    hasInputSchema = Boolean(bazaarInfo?.input || bazaar?.schema);
+    hasOutputSchema = Boolean(
+      bazaarInfo?.output ||
+        bazaar?.schema ||
+        acc0?.outputSchema ||
+        (isObject(acc0?.extra) ? acc0.extra.outputSchema : null)
+    );
+  } catch {
+    // Type errors are caught, return defaults
+  }
+
+  return { hasInputSchema, hasOutputSchema, hasDescription };
 }
 
 export async function checkLive402Metadata(
   fetchFn: FetchLike,
-  targetUrl: string
+  targetUrl: string,
+  declaredMethod?: string
 ): Promise<Live402Result> {
-  const method = 'GET';
-  const resp = await safeFetch(fetchFn, targetUrl, { method });
+  const defaultResult = (
+    details: string,
+    status: number,
+    method: string,
+    retried: boolean
+  ): Live402Result => ({
+    signal: { detected: false, details },
+    httpStatus: status,
+    hasInputSchema: false,
+    hasOutputSchema: false,
+    hasDescription: false,
+    methodUsed: method,
+    retriedWithPost: retried,
+  });
 
-  if (!resp) {
-    return {
-      signal: { detected: false, details: 'Request failed or timed out' },
-      httpStatus: 0,
-      hasInputSchema: false,
-      hasOutputSchema: false,
-      hasDescription: false,
-    };
-  }
-  if (resp.status !== 402) {
-    return {
-      signal: { detected: false, details: `HTTP ${resp.status} observed at ${targetUrl}, expected 402 Payment Required` },
-      httpStatus: resp.status,
-      hasInputSchema: false,
-      hasOutputSchema: false,
-      hasDescription: false,
-    };
-  }
+  try {
+    const preferredMethod = declaredMethod?.toUpperCase() || 'GET';
+    let methodUsed = preferredMethod;
+    let retriedWithPost = false;
 
-  let pr: X402PaymentRequired | null = null;
+    let { response, error, timedOut } = await safeFetch(fetchFn, targetUrl, { method: preferredMethod });
 
-  const paymentRequiredHeader =
-    resp.headers.get('payment-required') || resp.headers.get('PAYMENT-REQUIRED');
-  if (paymentRequiredHeader) {
-    try {
-      const padded =
-        paymentRequiredHeader + '==='.slice(0, (4 - (paymentRequiredHeader.length % 4)) % 4);
-      const decoded = atob(padded);
-      pr = JSON.parse(decoded) as X402PaymentRequired;
-    } catch {
-      pr = null;
+    if (timedOut) {
+      return defaultResult('Could not confirm (request timed out)', 0, methodUsed, false);
     }
-  }
 
-  if (!pr) {
-    const text = await getText(resp);
-    const parsed = parseJson(text);
-    if (parsed && typeof parsed === 'object') {
-      pr = parsed as X402PaymentRequired;
+    if (!response) {
+      return defaultResult(error || 'Request failed', 0, methodUsed, false);
     }
-  }
 
-  if (!pr) {
+    if (response.status === 405 && preferredMethod === 'GET') {
+      retriedWithPost = true;
+      methodUsed = 'POST';
+      const retryResult = await safeFetch(fetchFn, targetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+
+      if (retryResult.timedOut) {
+        return defaultResult('Could not confirm (POST retry timed out)', 0, methodUsed, true);
+      }
+
+      if (!retryResult.response) {
+        return {
+          signal: {
+            detected: false,
+            details: `GET returned 405 (method not allowed), POST retry failed: ${retryResult.error || 'unknown error'}`,
+          },
+          httpStatus: 405,
+          hasInputSchema: false,
+          hasOutputSchema: false,
+          hasDescription: false,
+          methodUsed,
+          retriedWithPost: true,
+        };
+      }
+
+      response = retryResult.response;
+    }
+
+    if (response.status === 405) {
+      return {
+        signal: {
+          detected: false,
+          details: `Could not confirm: endpoint returned 405 Method Not Allowed (tried ${methodUsed}). May require different HTTP method.`,
+        },
+        httpStatus: 405,
+        hasInputSchema: false,
+        hasOutputSchema: false,
+        hasDescription: false,
+        methodUsed,
+        retriedWithPost,
+      };
+    }
+
+    if (response.status !== 402) {
+      return {
+        signal: {
+          detected: false,
+          details: `HTTP ${response.status} observed at ${targetUrl}, expected 402 Payment Required`,
+        },
+        httpStatus: response.status,
+        hasInputSchema: false,
+        hasOutputSchema: false,
+        hasDescription: false,
+        methodUsed,
+        retriedWithPost,
+      };
+    }
+
+    const paymentRequiredHeader =
+      response.headers.get('payment-required') || response.headers.get('PAYMENT-REQUIRED');
+
+    const { text, timedOut: bodyTimedOut } = await getTextWithTimeout(response);
+    if (bodyTimedOut) {
+      return defaultResult('Could not confirm (body read timed out)', 402, methodUsed, retriedWithPost);
+    }
+
+    const pr = parse402Response(text, paymentRequiredHeader);
+
+    if (!pr) {
+      return {
+        signal: { detected: false, details: '402 response observed but could not parse payment-required challenge' },
+        httpStatus: 402,
+        hasInputSchema: false,
+        hasOutputSchema: false,
+        hasDescription: false,
+        methodUsed,
+        retriedWithPost,
+      };
+    }
+
+    const { hasInputSchema, hasOutputSchema, hasDescription } = extract402Metadata(pr);
+    const hasSchema = hasInputSchema || hasOutputSchema;
+
+    if (hasDescription && hasSchema) {
+      const retryNote = retriedWithPost ? ' (after POST retry)' : '';
+      return {
+        signal: { detected: true, details: `402 challenge includes description and schema${retryNote}` },
+        httpStatus: 402,
+        parsed: pr,
+        hasInputSchema,
+        hasOutputSchema,
+        hasDescription,
+        methodUsed,
+        retriedWithPost,
+      };
+    }
+
+    const missing: string[] = [];
+    if (!hasDescription) missing.push('description');
+    if (!hasInputSchema && !hasOutputSchema) missing.push('input/output schema');
+    else if (!hasInputSchema) missing.push('input schema');
+    else if (!hasOutputSchema) missing.push('output schema');
+
     return {
-      signal: { detected: false, details: '402 response observed but could not parse payment-required challenge' },
-      httpStatus: 402,
-      hasInputSchema: false,
-      hasOutputSchema: false,
-      hasDescription: false,
-    };
-  }
-
-  const acc = pr.accepts || [];
-  const acc0 = acc.length > 0 && typeof acc[0] === 'object' ? acc[0] : {};
-  const resourceDesc =
-    (pr.resource && typeof pr.resource === 'object'
-      ? (pr.resource as Record<string, unknown>).description
-      : null) || acc0.description;
-  const hasDesc = Boolean(resourceDesc && String(resourceDesc).trim());
-
-  const bazaar = pr.extensions?.bazaar || {};
-  const hasInputSchema = Boolean(bazaar.info?.input || bazaar.schema);
-  const hasOutputSchema = Boolean(
-    bazaar.info?.output || bazaar.schema || acc0.outputSchema || acc0.extra?.outputSchema
-  );
-
-  const hasSchema = hasInputSchema || hasOutputSchema;
-
-  if (hasDesc && hasSchema) {
-    return {
-      signal: { detected: true, details: '402 challenge includes description and schema' },
+      signal: { detected: false, details: `402 challenge observed but missing: ${missing.join(', ')}` },
       httpStatus: 402,
       parsed: pr,
       hasInputSchema,
       hasOutputSchema,
-      hasDescription: hasDesc,
+      hasDescription,
+      methodUsed,
+      retriedWithPost,
     };
+  } catch (err) {
+    return defaultResult(`Error checking 402: ${String(err)}`, 0, 'GET', false);
   }
-  const missing: string[] = [];
-  if (!hasDesc) missing.push('description');
-  if (!hasInputSchema && !hasOutputSchema) missing.push('input/output schema');
-  else if (!hasInputSchema) missing.push('input schema');
-  else if (!hasOutputSchema) missing.push('output schema');
-
-  return {
-    signal: { detected: false, details: `402 challenge observed but missing: ${missing.join(', ')}` },
-    httpStatus: 402,
-    parsed: pr,
-    hasInputSchema,
-    hasOutputSchema,
-    hasDescription: hasDesc,
-  };
 }
 
 function isValidEthereumAddress(addr: string): boolean {
   return /^0x[a-fA-F0-9]{40}$/.test(addr);
 }
 
-function normalizeAmount(amount: string | number | undefined): string | undefined {
-  if (amount === undefined) return undefined;
-  return String(amount);
+function normalizeAmount(amount: unknown): string | undefined {
+  const s = safeString(amount);
+  return s;
 }
 
-function extractPriceFromLlmsTxt(text: string): PriceSource[] {
-  const sources: PriceSource[] = [];
-  const pricePatterns = [
-    /(\d+(?:\.\d+)?)\s*USDC/gi,
-    /\$(\d+(?:\.\d+)?)/g,
-    /price[:\s]+(\d+(?:\.\d+)?)/gi,
-    /cost[:\s]+(\d+(?:\.\d+)?)/gi,
-    /(\d+)\s*atomic\s*USDC/gi,
-  ];
-
-  for (const pattern of pricePatterns) {
-    const matches = text.matchAll(pattern);
-    for (const match of matches) {
-      const value = match[1];
-      if (value) {
-        const numVal = parseFloat(value);
-        let amountAtomic: string;
-        if (pattern.source.includes('atomic')) {
-          amountAtomic = value;
-        } else if (numVal < 1000) {
-          amountAtomic = Math.round(numVal * 1_000_000).toString();
-        } else {
-          amountAtomic = value;
-        }
-        sources.push({ source: 'llms.txt', amount: amountAtomic });
-      }
-    }
-  }
-
-  const networkPatterns = [/eip155:\d+/gi, /base[-\s]?mainnet/gi, /ethereum[-\s]?mainnet/gi];
-  for (const pattern of networkPatterns) {
-    const match = text.match(pattern);
-    if (match) {
-      if (sources.length > 0) {
-        sources[0].network = match[0].toLowerCase().replace(/\s/g, '-');
-      } else {
-        sources.push({ source: 'llms.txt', network: match[0].toLowerCase().replace(/\s/g, '-') });
-      }
-      break;
-    }
-  }
-
-  const addressPattern = /0x[a-fA-F0-9]{40}/g;
-  const addresses = text.match(addressPattern) || [];
-  for (const addr of addresses) {
-    const lowerAddr = addr.toLowerCase();
-    if (USDC_CONTRACTS.has(lowerAddr)) {
-      if (sources.length > 0 && !sources[0].asset) {
-        sources[0].asset = lowerAddr;
-      }
-    }
-  }
-
-  return sources;
+export interface PriceSourceForResource extends PriceSource {
+  normalizedUrl?: string;
+  method?: string;
 }
 
-function extractPriceFromX402Wellknown(json: unknown): PriceSource[] {
-  const sources: PriceSource[] = [];
-  if (!json || typeof json !== 'object') return sources;
-
-  const obj = json as Record<string, unknown>;
-  const resources = (obj.resources as Array<Record<string, unknown>>) || [];
+function extractPriceSourcesFromX402Resources(resources: X402Resource[]): PriceSourceForResource[] {
+  const sources: PriceSourceForResource[] = [];
 
   for (const resource of resources) {
-    const accepts = (resource.accepts as Array<Record<string, unknown>>) || [];
-    for (const accept of accepts) {
+    for (const accept of resource.accepts) {
       sources.push({
         source: '/.well-known/x402',
-        amount: normalizeAmount(accept.amount as string | number),
-        asset: (accept.asset as string)?.toLowerCase(),
-        network: accept.network as string,
-        payTo: (accept.payTo as string)?.toLowerCase(),
+        amount: accept.amount,
+        asset: accept.asset,
+        network: accept.network,
+        payTo: accept.payTo,
+        normalizedUrl: resource.normalizedUrl,
+        method: resource.method,
       });
     }
   }
@@ -441,9 +708,15 @@ function extractPriceFromX402Wellknown(json: unknown): PriceSource[] {
 async function fetchSkillMd(fetchFn: FetchLike, baseUrl: string): Promise<string> {
   const paths = ['/SKILL.md', '/skill.md', '/.well-known/SKILL.md'];
   for (const path of paths) {
-    const resp = await safeFetch(fetchFn, `${baseUrl}${path}`);
-    if (resp && resp.status === 200) {
-      return await getText(resp);
+    try {
+      const { response, timedOut } = await safeFetch(fetchFn, `${baseUrl}${path}`);
+      if (timedOut) continue;
+      if (response && response.status === 200) {
+        const { text, timedOut: bodyTimedOut } = await getTextWithTimeout(response);
+        if (!bodyTimedOut) return text;
+      }
+    } catch {
+      continue;
     }
   }
   return '';
@@ -456,9 +729,34 @@ export function validate402Response(
   hasInputSchema: boolean,
   hasOutputSchema: boolean,
   hasDescription: boolean,
-  priceSources: PriceSource[]
+  priceSources: PriceSourceForResource[],
+  methodUsed: string,
+  retriedWithPost: boolean
 ): X402ValidationResult {
   const issues: X402Issue[] = [];
+
+  if (httpStatus === 405) {
+    return {
+      httpStatus,
+      hasAcceptsArray: false,
+      hasInputSchema: false,
+      hasOutputSchema: false,
+      hasDescription: false,
+      networkValid: false,
+      assetValid: false,
+      payToValid: false,
+      resourceUrlMatches: false,
+      priceConsistency: { checked: false, consistent: false, sources: [] },
+      issues: [
+        {
+          severity: 'medium',
+          code: 'METHOD_NOT_ALLOWED',
+          en: `Endpoint returned 405 Method Not Allowed (tried ${methodUsed}${retriedWithPost ? ' after POST retry' : ''}). Check /.well-known/x402 for the correct method.`,
+          ja: `エンドポイントが405 Method Not Allowedを返しました（${methodUsed}を試行${retriedWithPost ? '、POST再試行後' : ''}）。正しいメソッドは/.well-known/x402を確認してください。`,
+        },
+      ],
+    };
+  }
 
   if (httpStatus !== 402) {
     return {
@@ -506,7 +804,7 @@ export function validate402Response(
     };
   }
 
-  const hasAcceptsArray = Array.isArray(parsed.accepts) && parsed.accepts.length > 0;
+  const hasAcceptsArray = isArray(parsed.accepts) && parsed.accepts.length > 0;
   if (!hasAcceptsArray) {
     issues.push({
       severity: 'high',
@@ -543,10 +841,14 @@ export function validate402Response(
     });
   }
 
-  const acc0 = hasAcceptsArray ? parsed.accepts![0] : null;
-  const network = acc0?.network;
-  const asset = acc0?.asset?.toLowerCase();
-  const payTo = acc0?.payTo?.toLowerCase();
+  let acc0: Record<string, unknown> | null = null;
+  if (hasAcceptsArray && isObject(parsed.accepts![0])) {
+    acc0 = parsed.accepts![0] as Record<string, unknown>;
+  }
+
+  const network = safeString(acc0?.network);
+  const asset = safeString(acc0?.asset)?.toLowerCase();
+  const payTo = safeString(acc0?.payTo)?.toLowerCase();
   const amount = normalizeAmount(acc0?.amount ?? acc0?.maxAmountRequired);
 
   const networkValid = network ? KNOWN_NETWORKS.has(network.toLowerCase()) : false;
@@ -589,38 +891,41 @@ export function validate402Response(
   }
 
   let resourceUrlMatches = false;
-  if (parsed.resource && typeof parsed.resource === 'object') {
-    const resourceUrl = (parsed.resource as Record<string, unknown>).resource as string;
-    if (resourceUrl) {
-      try {
-        const parsedTarget = new URL(targetUrl);
-        const parsedResource = new URL(resourceUrl);
-        resourceUrlMatches =
-          parsedTarget.host === parsedResource.host &&
-          parsedTarget.pathname === parsedResource.pathname;
-        if (!resourceUrlMatches) {
-          issues.push({
-            severity: 'low',
-            code: 'RESOURCE_URL_MISMATCH',
-            en: `Resource URL "${resourceUrl}" does not match checked URL "${targetUrl}"`,
-            ja: `リソースURL "${resourceUrl}" はチェック対象URL "${targetUrl}" と一致しません`,
-          });
-        }
-      } catch {
-        resourceUrlMatches = false;
+  const resourceObj = isObject(parsed.resource) ? parsed.resource : null;
+  const resourceUrl = safeString(resourceObj?.resource);
+  if (resourceUrl) {
+    try {
+      const parsedTarget = new URL(targetUrl);
+      const parsedResource = new URL(resourceUrl);
+      resourceUrlMatches =
+        parsedTarget.host === parsedResource.host && parsedTarget.pathname === parsedResource.pathname;
+      if (!resourceUrlMatches) {
+        issues.push({
+          severity: 'low',
+          code: 'RESOURCE_URL_MISMATCH',
+          en: `Resource URL "${resourceUrl}" does not match checked URL "${targetUrl}"`,
+          ja: `リソースURL "${resourceUrl}" はチェック対象URL "${targetUrl}" と一致しません`,
+        });
       }
+    } catch {
+      resourceUrlMatches = false;
     }
   }
+
+  const targetNormalized = normalizeResourceUrl(targetUrl);
+  const matchingSources = priceSources.filter(
+    (s) => s.normalizedUrl && s.normalizedUrl === targetNormalized
+  );
 
   let priceConsistent = true;
   const priceDetails: string[] = [];
 
-  if (amount && priceSources.length > 0) {
-    for (const source of priceSources) {
+  if (amount && matchingSources.length > 0) {
+    for (const source of matchingSources) {
       if (source.amount && source.amount !== amount) {
         priceConsistent = false;
         priceDetails.push(
-          `${source.source} advertises ${source.amount} but 402 shows ${amount}`
+          `${source.source} advertises amount ${source.amount} but 402 shows ${amount}`
         );
       }
       if (source.network && network && source.network.toLowerCase() !== network.toLowerCase()) {
@@ -644,12 +949,12 @@ export function validate402Response(
     }
   }
 
-  if (!priceConsistent) {
+  if (!priceConsistent && priceDetails.length > 0) {
     issues.push({
       severity: 'medium',
       code: 'PRICE_MISMATCH',
-      en: `Price/network/asset/payTo mismatch between 402 and advertised values: ${priceDetails.join('; ')}`,
-      ja: `402と公開値の間で価格/ネットワーク/アセット/payToの不一致: ${priceDetails.join('; ')}`,
+      en: `Price/network/asset/payTo mismatch for this resource: ${priceDetails.join('; ')}`,
+      ja: `このリソースの価格/ネットワーク/アセット/payToの不一致: ${priceDetails.join('; ')}`,
     });
   }
 
@@ -664,9 +969,9 @@ export function validate402Response(
     payToValid,
     resourceUrlMatches,
     priceConsistency: {
-      checked: priceSources.length > 0,
+      checked: matchingSources.length > 0,
       consistent: priceConsistent,
-      sources: priceSources,
+      sources: matchingSources,
       details: priceDetails.length > 0 ? priceDetails.join('; ') : undefined,
     },
     issues,
@@ -681,61 +986,45 @@ export async function checkVerificationPage(
   llmsTxtContent: string,
   cardContent: string
 ): Promise<SignalResult> {
-  const combined = llmsTxtContent + cardContent;
-  if (VER_LINK_PATTERN.test(combined)) {
-    return { detected: true, details: 'Verification/proof URL pattern observed in llms.txt or agent-card' };
-  }
-
-  for (const path of VER_PATHS) {
-    const resp = await safeFetch(fetchFn, `${baseUrl}${path}`);
-    if (!resp || resp.status !== 200) continue;
-    const text = await getText(resp);
-    if (soft404Body && text.trim() === soft404Body) continue;
-    if (text.trim().length > 200 && VER_CONTENT_PATTERN.test(text)) {
-      return { detected: true, details: `Verification page observed at ${path}` };
+  try {
+    const combined = llmsTxtContent + cardContent;
+    if (VER_LINK_PATTERN.test(combined)) {
+      return { detected: true, details: 'Verification/proof URL pattern observed in llms.txt or agent-card' };
     }
+
+    for (const path of VER_PATHS) {
+      const { response, timedOut } = await safeFetch(fetchFn, `${baseUrl}${path}`);
+      if (timedOut) continue;
+      if (!response || response.status !== 200) continue;
+
+      const { text, timedOut: bodyTimedOut } = await getTextWithTimeout(response);
+      if (bodyTimedOut) continue;
+      if (soft404Body && text.trim() === soft404Body) continue;
+      if (text.trim().length > 200 && VER_CONTENT_PATTERN.test(text)) {
+        return { detected: true, details: `Verification page observed at ${path}` };
+      }
+    }
+    return {
+      detected: false,
+      details: 'No verification/proof page observed at standard paths or linked from llms.txt/agent-card',
+    };
+  } catch (err) {
+    return { detected: false, details: `Error checking verification page: ${String(err)}` };
   }
-  return { detected: false, details: 'No verification/proof page observed at standard paths or linked from llms.txt/agent-card' };
 }
 
 async function getSoft404Body(fetchFn: FetchLike, baseUrl: string): Promise<string | null> {
-  const resp = await safeFetch(fetchFn, `${baseUrl}/__x402_census_404_probe_7f3a`);
-  if (resp && resp.status === 200) {
-    const text = await getText(resp);
-    return text.trim();
-  }
-  return null;
-}
-
-export async function checkX402WellknownWithContent(
-  fetchFn: FetchLike,
-  baseUrl: string,
-  soft404Body: string | null
-): Promise<{ result: SignalResult; content: unknown | null }> {
-  for (const path of ['/.well-known/x402', '/.well-known/x402.json']) {
-    const resp = await safeFetch(fetchFn, `${baseUrl}${path}`);
-    if (!resp || resp.status !== 200) continue;
-    const text = await getText(resp);
-    if (soft404Body && text.trim() === soft404Body) continue;
-    const json = parseJson(text);
-    if (
-      json &&
-      ((typeof json === 'object' && Object.keys(json as object).length > 0) ||
-        (Array.isArray(json) && json.length > 0))
-    ) {
-      return {
-        result: { detected: true, details: `Found non-empty JSON at ${path}` },
-        content: json,
-      };
+  try {
+    const { response, timedOut } = await safeFetch(fetchFn, `${baseUrl}/__x402_census_404_probe_7f3a`);
+    if (timedOut) return null;
+    if (response && response.status === 200) {
+      const { text, timedOut: bodyTimedOut } = await getTextWithTimeout(response);
+      if (!bodyTimedOut) return text.trim();
     }
+    return null;
+  } catch {
+    return null;
   }
-  return {
-    result: {
-      detected: false,
-      details: 'No non-empty x402 config observed at /.well-known/x402 or x402.json',
-    },
-    content: null,
-  };
 }
 
 export async function checkUrl(
@@ -745,6 +1034,7 @@ export async function checkUrl(
   const urlObj = new URL(targetUrl);
   const host = urlObj.hostname.toLowerCase();
   const baseUrl = `${urlObj.protocol}//${urlObj.host}`;
+  const targetNormalized = normalizeResourceUrl(targetUrl);
 
   const soft404Body = await getSoft404Body(fetchFn, baseUrl);
 
@@ -752,16 +1042,19 @@ export async function checkUrl(
   let llmsTxtContent = '';
   let cardContent = '';
   let robotsText = '';
-  let x402WellknownContent: unknown | null = null;
-  const priceSources: PriceSource[] = [];
+  let x402Resources: X402Resource[] = [];
+  const priceSources: PriceSourceForResource[] = [];
 
-  const llmsResult = await checkLlmsTxt(fetchFn, baseUrl, soft404Body);
-  signals.llms_txt = llmsResult;
-  if (llmsResult.detected) {
-    const resp = await safeFetch(fetchFn, `${baseUrl}/llms.txt`);
-    if (resp) {
-      llmsTxtContent = await getText(resp);
-      priceSources.push(...extractPriceFromLlmsTxt(llmsTxtContent));
+  signals.llms_txt = await checkLlmsTxt(fetchFn, baseUrl, soft404Body);
+  if (signals.llms_txt.detected) {
+    try {
+      const { response, timedOut } = await safeFetch(fetchFn, `${baseUrl}/llms.txt`);
+      if (!timedOut && response) {
+        const { text } = await getTextWithTimeout(response);
+        llmsTxtContent = text;
+      }
+    } catch {
+      // Continue without llms.txt content
     }
   }
 
@@ -771,16 +1064,16 @@ export async function checkUrl(
 
   const x402Result = await checkX402WellknownWithContent(fetchFn, baseUrl, soft404Body);
   signals.x402_wellknown = x402Result.result;
-  x402WellknownContent = x402Result.content;
-  if (x402WellknownContent) {
-    priceSources.push(...extractPriceFromX402Wellknown(x402WellknownContent));
-  }
+  x402Resources = x402Result.resources;
+  priceSources.push(...extractPriceSourcesFromX402Resources(x402Resources));
 
-  const skillMdContent = await fetchSkillMd(fetchFn, baseUrl);
-  if (skillMdContent) {
-    priceSources.push(
-      ...extractPriceFromLlmsTxt(skillMdContent).map((s) => ({ ...s, source: 'SKILL.md' }))
-    );
+  try {
+    const skillMdContent = await fetchSkillMd(fetchFn, baseUrl);
+    if (skillMdContent) {
+      // SKILL.md is not URL-specific, don't add to price sources for comparison
+    }
+  } catch {
+    // Continue without SKILL.md
   }
 
   const robotsResult = await checkRobotsTxt(fetchFn, baseUrl, soft404Body);
@@ -789,7 +1082,10 @@ export async function checkUrl(
 
   signals.sitemap_xml = await checkSitemapXml(fetchFn, baseUrl, soft404Body, robotsText);
 
-  const live402Result = await checkLive402Metadata(fetchFn, targetUrl);
+  const matchingResource = x402Resources.find((r) => r.normalizedUrl === targetNormalized);
+  const declaredMethod = matchingResource?.method;
+
+  const live402Result = await checkLive402Metadata(fetchFn, targetUrl, declaredMethod);
   signals.live402_metadata = live402Result.signal;
 
   signals.verification_page_heuristic = await checkVerificationPage(
@@ -807,16 +1103,19 @@ export async function checkUrl(
     live402Result.hasInputSchema,
     live402Result.hasOutputSchema,
     live402Result.hasDescription,
-    priceSources
+    priceSources,
+    live402Result.methodUsed,
+    live402Result.retriedWithPost
   );
 
   const score = calculateScore(signals);
-
   const fixes = buildFixes(signals);
 
   for (const issue of x402Validation.issues) {
-    if (issue.severity === 'high') {
-      const existingFix = fixes.find((f) => f.signal === 'live402_metadata');
+    if (issue.severity === 'high' || issue.severity === 'medium') {
+      const existingFix = fixes.find(
+        (f) => f.signal === 'live402_metadata' || f.signal === `402_validation:${issue.code}`
+      );
       if (!existingFix) {
         fixes.unshift({
           signal: `402_validation:${issue.code}`,
